@@ -1,0 +1,13 @@
+1
+a protocol bssp 1400 100
+a induct bssp 1 bsspcli
+a outduct bssp 2 bsspclo
+a outduct bssp 3 bsspclo
+a outduct bssp 4 bsspclo
+a scheme ipn 'ipnfw' 'ipnadminep'
+a endpoint ipn:4.1 q
+a endpoint ipn:4.2 q
+a scheme imc 'imcfw' ''
+r 'ipnadmin node.ipnrc'
+w 1
+s

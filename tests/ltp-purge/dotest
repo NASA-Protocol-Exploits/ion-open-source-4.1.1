@@ -1,0 +1,247 @@
+#!/bin/bash
+#
+# Scott Burleigh
+# April 12, 2010
+
+# documentation boilerplate
+CONFIGFILES=" \
+./global.ionrc \
+./2.ipn.ltp/amroc.ltprc \
+./2.ipn.ltp/amroc.bprc \
+./2.ipn.ltp/amroc.ionconfig \
+./2.ipn.ltp/amroc.ionrc \
+./2.ipn.ltp/amroc.ionsecrc \
+./2.ipn.ltp/amroc.ipnrc \
+"
+
+echo "Looking for acsadmin"
+which acsadmin
+if [ $? -eq 0 ] ; then
+	ACS="found"
+	CONFIGFILES=$CONFIGFILES" ./2.ipn.ltp/amroc.acsrc"
+fi
+
+CONFIGFILES=$CONFIGFILES"
+./5.ipn.ltp/amroc.ltprc \
+./5.ipn.ltp/amroc.bprc \
+./5.ipn.ltp/amroc.ionconfig \
+./5.ipn.ltp/amroc.ionrc \
+./5.ipn.ltp/amroc.ionsecrc \
+./5.ipn.ltp/amroc.ipnrc \
+"
+
+if [ $ACS == "found" ] ; then
+	CONFIGFILES=$CONFIGFILES" ./5.ipn.ltp/amroc.acsrc"
+fi
+
+CONFIGFILES=$CONFIGFILES"
+./3.ipn.ltp/amroc.ltprc \
+./3.ipn.ltp/amroc.bprc \
+./3.ipn.ltp/amroc.ionconfig \
+./3.ipn.ltp/amroc.ionrc \
+./3.ipn.ltp/amroc.ionsecrc \
+./3.ipn.ltp/amroc.ipnrc \
+"
+
+if [ $ACS == "found" ] ; then
+	CONFIGFILES=$CONFIGFILES" ./3.ipn.ltp/amroc.acsrc"
+fi
+
+echo "########################################"
+echo
+pwd | sed "s/\/.*\///" | xargs echo "NAME: "
+echo
+echo "PURPOSE: To test out the functionality of LTP Purge.  Described in issue
+	173, an option is added to cancel all LTP sessions when the contact
+	time period is over.  This allows bundles mid-transfer to be re-inserted
+	into the routing engine, where they can be reforwarded on a different
+	and possibly more-efficient path immediately.  Otherwise bundles would
+	normally sit in the LTP session awaiting completion when the LTP contact
+	is renewed."
+echo
+echo "CONFIG: 3 node custom configuration:"
+echo
+for N in $CONFIGFILES
+do
+	echo "$N:"
+	cat $N
+	echo "# EOF"
+	echo
+done
+echo "OUTPUT: Various message bundles are expected to have been received
+	at the end of the test.  There is also a large description of activities
+	mid-test."
+echo
+echo "########################################"
+
+echo "Cleaning up old ION..."
+rm -f 2.ipn.ltp/ion.log 3.ipn.ltp/ion.log 5.ipn.ltp/ion.log
+rm -f 3.ipn.ltp/testfile*
+rm -f 5.ipn.ltp/testfile*
+killm
+sleep 1
+
+echo "Starting ION..."
+export ION_NODE_LIST_DIR=$PWD
+rm -f ./ion_nodes
+
+# Start nodes.
+cd 2.ipn.ltp
+ionadmin amroc.ionrc
+cd ../3.ipn.ltp
+ionadmin amroc.ionrc
+cd ../5.ipn.ltp
+ionadmin amroc.ionrc
+
+if [ $ACS == "found" ] ; then
+	cd ../2.ipn.ltp
+	acsadmin amroc.acsrc
+	cd ../3.ipn.ltp
+	acsadmin amroc.acsrc
+	cd ../5.ipn.ltp
+	acsadmin amroc.acsrc
+fi
+
+cd ../2.ipn.ltp
+ionadmin ../global.ionrc &
+cd ../3.ipn.ltp
+ionadmin ../global.ionrc &
+cd ../5.ipn.ltp
+ionadmin ../global.ionrc &
+
+cd ../2.ipn.ltp
+ionsecadmin amroc.ionsecrc &
+cd ../3.ipn.ltp
+ionsecadmin amroc.ionsecrc &
+cd ../5.ipn.ltp
+ionsecadmin amroc.ionsecrc &
+
+cd ../2.ipn.ltp
+ltpadmin amroc.ltprc &
+cd ../3.ipn.ltp
+ltpadmin amroc.ltprc &
+cd ../5.ipn.ltp
+ltpadmin amroc.ltprc &
+
+cd ../2.ipn.ltp
+bpadmin amroc.bprc &
+cd ../3.ipn.ltp
+bpadmin amroc.bprc &
+cd ../5.ipn.ltp
+bpadmin amroc.bprc &
+
+../../../system_up -i "p 30" -l "p 30" -b "p 30"
+
+if [ $? -eq 3 ]
+then
+	echo ""
+else
+	echo "Node 2 not started: Aborting Test"
+	exit 1
+fi
+
+../../../system_up -i "p 30" -l "p 30" -b "p 30"
+
+if [ $? -eq 3 ]
+then
+	echo ""
+else
+	echo "Node 3 not started: Aborting Test"
+	exit 1
+fi
+
+../../../system_up -i "p 30" -l "p 30" -b "p 30"
+
+if [ $? -eq 3 ]
+then
+	echo ""
+else
+	echo "Node 5 not started: Aborting Test"
+	exit 1
+fi
+
+# Start file receivers on nodes 3 and 5.
+echo "Starting bprecvfile..."
+cd ../3.ipn.ltp
+bprecvfile ipn:3.2 &
+cd ../5.ipn.ltp
+bprecvfile ipn:5.2 &
+sleep 1
+
+# Send two files from node 2.
+cd ../2.ipn.ltp
+echo "Sending two files from node 2, one each to nodes 3 and 5."
+echo "(start of watch characters)..."
+bpsendfile ipn:2.2 ipn:3.2 testfilex
+sleep 1
+bpsendfile ipn:2.2 ipn:5.2 testfiley
+
+# Wait for all sessions to terminate.
+echo "Waiting for all contacts to terminate..."
+echo "During this time, there are two contact intervals.
+
+Before interval A, both files sourced at node 2 are queued for
+transmission: file x is queued for transmission to node 3
+during interval A while file y is queued for transmission to
+node 5 during interval A.
+
+During interval A, files x and y are transmitted by node 2 and both
+files are received, but the sessions don't close because the contacts
+with nodes 3 and 5 are simplex.
+
+Because the span to node 3 is configured for session purging, at the
+end of interval A the session is canceled; this causes the bundle
+destined for node 3 to be reforwarded, again to node 3, causing a
+second copy of the bundle to be queued up for transmission.  But
+the span to node 5 does not purge sessions, so at the end of interval
+A the session simply remains open.
+
+During interval B, simplex contacts with nodes 3 and 5 are restarted;
+The queued-up second copy of the file destined for node 3 is transmitted
+and received, but no additional transmission happens on the contact
+with node 5; that session is simply resumed.  Neither session closes
+because no return traffic arrives.
+
+So at the end of the test, node 3 has two copies of file x and node 5
+has one copy of file y."
+
+sleep 60
+echo "All contacts have terminated.  Verifying results..."
+
+# Verify bundle arrival.
+cd ../3.ipn.ltp
+RETVAL=0
+
+COUNT=`ls -l testfile* | grep 915 | wc -l`
+if [ $COUNT -eq 2 ]
+then
+	echo "OK: node 3 got two copies of file x."
+else
+	echo "ERROR: node 3 didn't get two copies of file x."
+	RETVAL=1
+fi
+
+cd ../5.ipn.ltp
+COUNT=`ls -l testfile* | grep 1070 | wc -l`
+if [ $COUNT -eq 1 ]
+then
+	echo "OK: node 5 got one copy of file y."
+else
+	echo "ERROR: node 5 didn't get one copy of file y."
+	RETVAL=1
+fi
+
+# Shut down ION processes.
+echo "Stopping ION..."
+cd ../2.ipn.ltp
+./ionstop &
+cd ../3.ipn.ltp
+./ionstop &
+cd ../5.ipn.ltp
+./ionstop &
+
+# Give all three nodes time to shut down, then clean up.
+sleep 5
+killm
+echo "LTP purge test completed."
+exit $RETVAL
